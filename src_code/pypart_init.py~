@@ -1,0 +1,110 @@
+######################################
+#pypart_init.py
+'''
+CREATE INPUT DICTIONARY FOR 
+PARTICLE RELEASE THAT INCLUDES
+ALL RELELVANT PARAMETERS INITIALIZED
+IN pypart_params.py
+
+AS WELL AS INITIAL PARTICLE
+LOCATIONS THAT ARE SET USING
+SPECIFICED SEEDING FUNCTION FROM
+SEEDING LIBRARY
+'''
+#DANIEL DAUHAJRE UCLA OCTOBER 2016
+######################################
+
+############################################
+#IMPORT MODULES
+import scipy.io as sio
+import numpy as np
+from netCDF4 import Dataset as netcdf
+import pypart_funcs as PF
+from utils import *
+from part  import *
+import ROMS_solutions_paths as ROMS_out_paths
+import pickle as pickle
+###########################################
+
+####################################
+# INITIALIZE PARAMETERS
+#####################################
+code_path = './src_code/'
+execfile(code_path + 'pypart_params.py')
+
+
+###########################################
+# OBTIAN ROMS OUTPUT PATHS 
+###########################################
+#ROMS_ID = 'L4PV_nowec_P3_1min'
+print 'Setting ROMS solutions paths for: ' + ROMS_ID
+ROMS_obj = ROMS_out_paths.ROMS_run(ROMS_ID)
+ROMS_obj.set_paths()
+#####################################
+#SET OUTPUT AND GRID FILE PATHS/NAMES
+####################################
+grd_name = ROMS_obj.path_grid + ROMS_obj.grid_name
+dat_name = ROMS_obj.path_output + ROMS_obj.out_base_name
+
+
+########################################
+#INITIALIZE INPUT PARTICLE DICTIONARY
+########################################
+init_dict = {}
+param_keys = ['ROMS_ID','fnum', 'frpf', 'nfr', 'fr', 'dfr','sub', 'out_part', 'veloc_adv', 'n_releases']
+param_key_types = [ROMS_ID, fnum, frpf, nfr, fr, dfr, sub, out_part, veloc_adv, n_releases]
+init_dict = PF.add_keys_dict(param_keys, param_key_types, var_dict = init_dict) 
+
+
+######################################################
+# INITIALIZE PARTICLE LOCATIONS BASED ON SEEDING
+# STRATEGY CHOSEN BY USER
+#####################################################
+if seed_choice == 'box':
+   init_dict['px'], init_dict['py'] = PF.box_seed(nq,sx_0,sx_1,sy_0,sy_1,n_ind)
+
+if seed_choice == 'isobath_fill':
+   """
+   FILL AREA BETWEEN ISOBAHS WITH PARTICLES
+   """
+   #LOAD BATHYMETRY FROM GRID
+   nc_grd = netcdf(grd_name, 'r')
+   init_dict['px'], init_dict['py'] = PF.isobath_fill_seed(nc_grd,h1,h2,i0,i1,j0,j1,nq_isos,fig_check_seed=check_seed)
+
+if seed_choice == 'radial_feature':
+   #ACCESS NETCDF OUTPUT AND GRID FILES TO USE FOR SEEDING VISUALIZATION
+   nc_out = netcdf(ROMS_obj.path_output + file_name_seed,'r')
+   nc_grd = netcdf(grd_name, 'r')
+   init_dict['px'], init_dict['py'] = PF.radial_feature_seed(nc_grd, nc_out, tind_seed,field_look=field_seed)
+
+if seed_choice == 'multi_seed_radial':
+   #ACCESS NETCDF OUTPUT AND GRID FILES TO USE FOR SEEDING VISUALIZATION
+   nc_out = netcdf(ROMS_obj.path_output + file_name_seed,'r')
+   nc_grd = netcdf(grd_name, 'r')
+   px_temp, py_temp = PF.radial_feature_seed(nc_grd, nc_out, tind_seed,field_look=field_seed)
+   init_dict['px'], init_dict['py'] = PF.multi_seed_radial(px_temp, py_temp, n_releases)
+
+
+if seed_choice == 'multi_site_circle':
+   nc_grd = netcdf(grd_name, 'r')
+   init_dict['px'], init_dict['py'] = PF.multi_site_circles(nc_grd, lat_sites, lon_sites, nq_sites, rad_sites, fig_check_seed = check_seed) 
+   if multi_releases:
+      px_temp = np.copy(init_dict['px'])
+      py_temp = np.copy(init_dict['py'])
+      init_dict['px'] = []
+      init_dict['py'] = []
+      init_dict['px'], int_dict['py'] = PF.multi_seed(px_temp, py_temp, n_releases)
+
+
+
+###################################################
+#	SAVE INPUT DICTIONARY AS PICKLE FILE
+##################################################
+PF.change_dir_py('part_in')
+PF.save_to_pickle(init_dict,run_name + '_in')
+
+
+
+
+
+

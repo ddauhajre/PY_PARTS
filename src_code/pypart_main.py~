@@ -1,0 +1,291 @@
+######################################
+#pypart_main.py
+'''
+PYTHON EXECUTABLE TO RUN PARTICLE TRACKING
+ANALYSIS ON ROMS OUTPUT
+
+BASED ON JEROEN'S CODE AS OF 10/23/2016
+   
+'''
+#DANIEL DAUHAJRE UCLA OCTOBER 2016
+######################################
+
+############################################
+#IMPORT MODULES
+import os
+import scipy.io as sio
+import numpy as np
+from netCDF4 import Dataset as netcdf
+from utils import *
+from part  import *
+import pypart_funcs as PF
+import ROMS_solutions_paths as ROMS_out_paths
+import pickle as pickle
+##############################################
+
+#############################################
+# LOAD INPUT DICTIONARY TO INITIALIZE ALL 
+# PARTICLE RELEASE PARAMETERS
+###########################################
+path_in = './part_in/'
+path,dirs,file_names = os.walk(path_in).next()
+init_dict = PF.load_pickle_file(path_in + file_names[0])
+
+###########################################
+# OBTIAN ROMS OUTPUT PATHS 
+###########################################
+#ROMS_ID = 'L4PV_nowec_P3_1min'
+print 'Setting ROMS solutions paths for: ' + init_dict['ROMS_ID']
+ROMS_obj = ROMS_out_paths.ROMS_run(init_dict['ROMS_ID'])
+ROMS_obj.set_paths()
+
+#####################################
+#SET OUTPUT AND GRID FILE PATHS/NAMES
+####################################
+grd_name = ROMS_obj.path_grid + ROMS_obj.grid_name
+dat_name = ROMS_obj.path_output + ROMS_obj.out_base_name
+
+
+#################################
+# READ IN GRID to obtain dx, dy
+##################################
+nc = netcdf(grd_name,'r')
+lon = nc.variables['lon_rho'][:]
+lat = nc.variables['lat_rho'][:]
+dx  = 1./np.mean(nc.variables['pm'][:])
+dy  = 1./np.mean(nc.variables['pm'][:])
+nc.close()
+print ''
+print 'grid spacing: ' ,dx,dy 
+print ''
+#############################################################
+# Make list of filenames with frame numbers of velocity data
+#############################################################
+fnum = init_dict['fnum']
+sub  = init_dict['sub']
+frpf =  init_dict['frpf']
+nfr  = init_dict['nfr']
+dfr  = init_dict['dfr']
+fr   = init_dict['fr']
+ifr  =   0;
+locfr  = []
+files = []
+
+for it in range(nfr+fr+2):
+   locfr.append(ifr)
+   files.append(dat_name + '%04d' %fnum + '.nc')
+   ifr = ifr + dfr 
+   if (ifr > frpf-1):
+      ifr = 0
+      add_on = frpf
+      if dfr > frpf:
+	 add_on = (frpf * (dfr / frpf))
+      fnum = fnum + add_on 
+
+######################################
+#OBTAIN INITIAL VELOCITIES AND TIMES
+######################################
+nc = netcdf(files[0],'r')
+lfr = locfr[0] 
+print '###################################'
+print ''
+print 'fname: ' ,files[0],' time step: ',lfr
+
+
+################################################
+# GRAB APPROPRIATE SURFACE FIELDS
+# ACCORDING TO RUN AND NETCDF STORAGE CONVENTION
+##################################################
+if init_dict['veloc_adv'] == 'surf':
+    u_key = 'u'
+    v_key = 'v'
+else:
+    u_key = 'ubar'
+    v_key = 'vbar'
+
+
+
+
+def get_uv_nc(nc_obj,u_key,v_key,tind):
+    '''
+    GRAB CORRECT VELOCITY BASED ON ROMS NETCDF
+    SAVING CONVENTION (I.E., FOR 1min runs surface
+    velocities saved as ubar, vbar)
+    '''
+    if len(nc_obj.variables[u_key].shape)>3:
+       u_out = np.squeeze(nc_obj.variables[u_key][tind,-1,:,:])
+       v_out = np.squeeze(nc_obj.variables[v_key][tind,-1,:,:])
+    else:
+       u_out = np.squeeze(nc_obj.variables[u_key][tind,:,:])
+       v_out = np.squeeze(nc_obj.variables[v_key][tind,:,:])
+
+    return u_out, v_out
+    ###############################################
+
+
+u0,v0 = get_uv_nc(nc, u_key, v_key, lfr)
+tim0 = nc.variables['ocean_time'][lfr];
+nc.close()
+
+nc = netcdf(files[1],'r')
+lfr = locfr[1]
+#print 'lfr = ',lfr
+print 'fname: ' ,files[1],' time step: ', lfr
+
+u1,v1 = get_uv_nc(nc,u_key,v_key,lfr)
+
+tim1 = nc.variables['ocean_time'][lfr];
+nc.close()
+print 'tim0: ' , tim0
+print 'tim1: ', tim1
+print 'tim1 - tim0 = ', tim1-tim0
+print ''
+print '#####################################'
+#print 'times: ' ,tim1,tim0,tim1-tim0
+
+(uny,unx) = u0.shape
+(vny,vnx) = v0.shape
+
+if uny != vny:
+   u0 = u2rho(u0); u1 = u2rho(u1)
+   v0 = v2rho(v0); v1 = v2rho(v1)
+
+(ny,nx) = u0.shape
+
+
+time = tim0
+time_start = time
+idx = 0 
+delt  = (tim1-tim0) 
+delti = 1./delt
+dt = delt/sub
+nit = nfr*sub
+
+##################################
+# Initialize particle arrays
+##################################
+px = init_dict['px']
+py = init_dict['py']
+n_releases = init_dict['n_releases']
+############################
+'''
+ temp arrays are to 
+ be used in time-stepping
+ and will have nans
+ for particles that
+ have not been released yet
+'''
+##############################
+px_temp = np.copy(px)
+py_temp = np.copy(py)
+
+nq = px.shape[0]
+
+
+####################################################
+# Create netcdf output file of particle positions
+####################################################
+print ''
+PF.change_dir_py('part_out')
+os.chdir('../')
+print 'Moving out of directory: ' + './part_out/'
+print ''
+par_name = './part_out/'+init_dict['out_part']
+nc = netcdf(par_name,'w')
+nc.createDimension('time',0)
+nc.createDimension('nq',nq)
+nct  = nc.createVariable('time','d',('time',))
+ncf  = nc.createVariable('frame','i',('time',))
+ncpx = nc.createVariable('px','d',('time','nq'))
+ncpy = nc.createVariable('py','d',('time','nq'))
+nct[idx] = time
+fr = 1
+ncf[idx] = fr
+
+#######################################
+# NaN out particles that are not released
+# at initial time
+########################################
+for n_p in range(1,nq,n_releases):
+    px_temp[n_p:n_p + n_releases-1] = np.nan
+    py_temp[n_p:n_p + n_releases-1] = np.nan
+
+
+######################################
+# WRITE INITIAL PARTICLES INTO NETCDF
+#######################################
+ncpx[idx,:] = px_temp
+ncpy[idx,:] = py_temp
+
+
+############################################
+# OBTAIN TIME-INDICES TO ADD NEW PARTICLES
+##########################################
+tinds_release = range(0,nit,(nfr/n_releases)*sub)
+
+
+
+
+
+#print 'lfr = ', lfr
+#print 'fr = ', fr
+         #####################################################################
+         #		 	PARTICLE TIME STEPPING 
+         ######################################################################
+print '#######################################################'
+print ''
+print '			TIME-STEPPING PARTICLES '
+print ''
+print '#######################################################'
+for it in range(nit):    # particle time steps
+   #######################################
+   # SEED NEW PARTICLES IF TIME TO SEED
+   ########################################
+   if it in tinds_release and it>0:
+       tind_r = tinds_release[tinds_release.index(it)] / sub
+       for n_p in range(tind_r,nq,n_releases):
+	   px_temp[n_p] = px[n_p]
+           py_temp[n_p] = py[n_p]
+
+   fct = (time+0.5*dt-tim0)*delti 
+   u = (1-fct)*u0 + fct*u1
+   v = (1-fct)*v0 + fct*v1
+
+   advance(px_temp,py_temp,u,v,dx,dy,dt,nx,ny,nq)
+   [px_temp,py_temp] = cull(px_temp,py_temp,nx,ny)
+   
+   time = time + dt
+
+   if (time+0.5*dt)>tim1:
+      print 'veloc_adv = ' + init_dict['veloc_adv']
+      print 'part_time = ', time
+      print 'ocean_time = ', tim1
+      print 'writing frame: ' ,idx+1, 'time: ',time
+#     seed(px,py,nqmx,mask);
+      print 'moving: ', nq,' particles'
+      idx = idx+1
+      fr = fr+1
+      nct[idx] = time
+      ncf[idx] = fr
+      ncpx[idx,:] = px_temp
+      ncpy[idx,:] = py_temp
+      u0 = u1;
+      v0 = v1;
+      tim0 = tim1;
+      # read new velocity data
+      nd = netcdf(files[fr],'r')
+      print ''
+      lfr = locfr[fr] 
+      print 'file: ', files[fr] + '  time step: ', locfr[fr]
+      u1,v1 = get_uv_nc(nd,u_key,v_key,lfr)
+      tim1 = nd.variables['ocean_time'][lfr];
+      nd.close()
+      if uny != vny:
+         u1 = u2rho(u1)
+         v1 = v2rho(v1)
+
+#######################################
+# CLOSE NETCDF FILE
+######################################
+nc.close()
+

@@ -1,0 +1,62 @@
+###################################
+#pypart_params.py
+'''
+SET PARAMETERS FOR PARTICLE RELEASE
+SIMULATION
+'''
+###################################
+
+run_name = 'L3_W_LTER_EXP2'
+
+##########################################
+# SET ROMS ID AND FILES TO INTEGRATE OVER
+"""
+ROMS_ID corresponds to cases 
+in ROMS_solutions_paths.py class, add on to this
+when using your own solution in the class
+"""
+#########################################
+ROMS_ID = 'L3_MidCal_Winter_2006'
+
+
+################################
+'''
+fnum ---> first file index
+frpf --> file index spacing (change this by multiples to change temporal resolution)
+nfr --> number of frames to integrate over
+fr --> starting frame in velocity file (zero index based)
+dfr --> time-step increment per netcdf file (default is 1)
+sub --> number of time-steps between frames
+'''
+##################################
+fnum    = 0 
+frpf    = 24
+fr      = 0
+dfr     = 1 
+nfr     = 24*15
+sub     = 40
+
+
+#####################################
+# TYPE OF VELOCITY TO ADVECT
+#####################################
+veloc_adv = 'surf'
+
+###############################
+# set output file name
+#################################
+out_part = run_name + '.nc'
+
+
+############################################
+# PARTICLE SEEDING PARAMETERS
+##############################################
+seed_choice = 'multi_site_circle'
+lat_sites = [34.400275, 34.471817, 34.46774988, 34.45850533, 34.3916319, 34.4137165, 34.402783, 34.3940708, 34.4221216, 34.05865, 34.0444335]
+lon_sites = [-119.7445915, -120.1426165, -120.11905, -120.33349, -119.5416933, -119.8221, -119.85755, -119.72957, -119.95154, -119.75763, -119.71513]
+nq_sites  = [100 for s in range(len(lat_sites))]
+rad_sites = [0.1 for s in range(len(lat_sites))]
+check_seed = False 
+multi_releases=True
+n_releases = nfr -1
+
